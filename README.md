@@ -24,7 +24,9 @@
 - 一键添加 Trojan-(WS/H2/HTTPUpgrade)-TLS
 - 一键启用 BBR
 - 一键更改伪装网站
-- 一键更改 (端口/UUID/密码/域名/路径/加密方式/SNI/等...)
+- 一键自定义每个代理节点的出站出口 (SOCKS5/HTTP 链式代理)
+- 一键开启/管理远程文件订阅 (支持随机高位端口与随机安全路径)
+- 一键更改 (端口/UUID/密码/域名/路径/加密方式/SNI/出口/等...)
 - 还有更多...
 
 # 设计理念
@@ -44,6 +46,18 @@
 # 文档
 
 安装及使用：https://233boy.com/sing-box/sing-box-script/
+
+# 安装
+
+```bash
+bash <(wget -qO- -o /dev/null https://raw.githubusercontent.com/xiumuzidiao0/sing-box/main/install.sh)
+```
+
+如果无法使用 wget，可使用 curl：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/xiumuzidiao0/sing-box/main/install.sh)
+```
 
 # 帮助
 
@@ -65,6 +79,7 @@ Usage: sing-box [options]... [args]...
    c, change [name] [option] [args... | auto]      更改配置
    d, del [name]                                   删除配置**
    i, info [name]                                  查看配置
+   sub, subscription [new | update | port | del]   远程文件订阅管理
    qr [name]                                       二维码信息
    url [name]                                      URL 信息
    log                                             查看日志
@@ -80,6 +95,7 @@ Usage: sing-box [options]... [args]...
    sni [name] [ ip | domain]                       更改 serverName
    new [name] [...]                                更改协议
    web [name] [domain]                             更改伪装网站
+   out, outbound [name] [addr:port | direct]       更改出口 (Outbound)
 
 进阶:
    dns [...]                                       设置 DNS
@@ -110,6 +126,6 @@ Usage: sing-box [options]... [args]...
    h, help                                         显示此帮助界面
 
 谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认
-反馈问题) https://github.com/233boy/sing-box/issues
+反馈问题) https://github.com/xiumuzidiao0/sing-box/issues
 文档(doc) https://233boy.com/sing-box/sing-box-script/
 ```

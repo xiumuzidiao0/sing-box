@@ -68,6 +68,7 @@ info_list=(
     "用户名 (Username)"
     "跳过证书验证 (allowInsecure)"
     "拥塞控制算法 (congestion_control)"
+    "出站出口 (outbound)"
 )
 change_list=(
     "更改协议"
@@ -83,6 +84,7 @@ change_list=(
     "更改 SNI (serverName)"
     "更改伪装网站"
     "更改用户名 (Username)"
+    "更改出口 (Outbound)"
 )
 servername_list=(
     www.amazon.com
@@ -334,6 +336,27 @@ create() {
         [[ $is_change || ! $json_str ]] && get protocol $2
         [[ $net == "reality" ]] && is_add_public_key=",outbounds:[{type:\"direct\"},{tag:\"public_key_$is_public_key\",type:\"direct\"}]"
         is_new_json=$(jq "{inbounds:[{tag:\"$is_config_name\",type:\"$is_protocol\",$is_listen,listen_port:$port,$json_str}]$is_add_public_key}" <<<{})
+        if [[ $is_outbound_server && $is_outbound_port ]]; then
+            is_outbound_tag="out-$is_config_name"
+            is_new_json=$(jq --arg tag "$is_outbound_tag" \
+                             --arg type "${is_outbound_type:-socks}" \
+                             --arg server "$is_outbound_server" \
+                             --argjson port "$is_outbound_port" \
+                             --arg user "${is_outbound_user:-}" \
+                             --arg pass "${is_outbound_pass:-}" \
+                             --arg in_tag "$is_config_name" \
+                             '
+              .outbounds = (.outbounds // []) + [
+                ({tag: $tag, type: $type, server: $server, server_port: $port}
+                 + (if $type == "socks" then {version: "5"} else {} end)
+                 + (if $user != "" then {username: $user} else {} end)
+                 + (if $pass != "" then {password: $pass} else {} end))
+              ] |
+              .route.rules = (.route.rules // []) + [
+                {inbound: [$in_tag], outbound: $tag}
+              ]
+            ' <<<$is_new_json)
+        fi
         [[ $is_test_json ]] && return # tmp test
         # only show json, dont save to file.
         [[ $is_gen ]] && {
@@ -356,6 +379,11 @@ create() {
         }
         # restart core
         manage restart &
+        # sync subscription if enabled
+        if [[ -f $is_core_dir/sub.json ]]; then
+            load sub.sh
+            sub_sync
+        fi
         ;;
     client)
         is_tls=tls
@@ -392,6 +420,72 @@ create() {
         manage restart &
         ;;
     esac
+}
+
+parse_outbound() {
+    local raw=$1
+    raw=$(echo "$raw" | xargs)
+    if [[ ! $raw || ${raw,,} =~ ^(direct|none|default|null)$ ]]; then
+        unset is_outbound_server is_outbound_port is_outbound_type is_outbound_user is_outbound_pass
+        return 0
+    fi
+
+    local type="socks"
+    local authority="$raw"
+
+    if [[ $raw =~ :// ]]; then
+        local scheme="${raw%%://*}"
+        authority="${raw#*://}"
+        case "${scheme,,}" in
+        socks5 | socks)
+            type="socks"
+            ;;
+        http | https)
+            type="http"
+            ;;
+        *)
+            err "不支持的出站协议类型: $scheme (仅支持 socks5 / http 或 direct)"
+            ;;
+        esac
+    fi
+
+    authority="${authority%%/*}"
+
+    local user=""
+    local pass=""
+    if [[ $authority =~ @ ]]; then
+        local creds="${authority%@*}"
+        authority="${authority#*@}"
+        if [[ $creds =~ : ]]; then
+            user="${creds%%:*}"
+            pass="${creds#*:}"
+        else
+            user="$creds"
+            pass=""
+        fi
+    fi
+
+    local host=""
+    local port=""
+    if [[ $authority =~ ^\[(.+)\]:([0-9]+)$ ]]; then
+        host="${BASH_REMATCH[1]}"
+        port="${BASH_REMATCH[2]}"
+    elif [[ $authority =~ ^([^:]+):([0-9]+)$ ]]; then
+        host="${BASH_REMATCH[1]}"
+        port="${BASH_REMATCH[2]}"
+    else
+        err "无效的出站地址格式: $raw\n请使用形如: 127.0.0.1:7928, socks5://127.0.0.1:7928, http://127.0.0.1:7928 或 direct"
+    fi
+
+    if [[ ! $(is_test port "$port") ]]; then
+        err "无效的出站端口: $port (端口范围 1-65535)"
+    fi
+
+    is_outbound_type="$type"
+    is_outbound_server="$host"
+    is_outbound_port="$port"
+    is_outbound_user="$user"
+    is_outbound_pass="$pass"
 }
 
 # change config file
@@ -438,6 +532,12 @@ change() {
             ;;
         web | proxy-site)
             is_change_id=11
+            ;;
+        user | username | socks-user)
+            is_change_id=12
+            ;;
+        out | outbound | exit)
+            is_change_id=13
             ;;
         *)
             [[ $is_try_change ]] && return
@@ -647,6 +747,13 @@ change() {
         ask string is_socks_user "请输入新用户名 (Username):"
         add $net
         ;;
+    13)
+        # new outbound
+        is_new_outbound=$3
+        [[ ! $is_new_outbound ]] && ask string is_new_outbound "请输入出站出口 (例如 127.0.0.1:7928, socks5://127.0.0.1:7928, http://127.0.0.1:7928, 或 direct 恢复默认):"
+        parse_outbound "$is_new_outbound"
+        add $net
+        ;;
     esac
 }
 
@@ -682,6 +789,11 @@ del() {
         warn "当前配置目录为空! 因为你刚刚删除了最后一个配置文件."
         is_conf_dir_empty=1
     fi
+    # sync subscription if enabled
+    if [[ -f $is_core_dir/sub.json ]]; then
+        load sub.sh
+        sub_sync
+    fi
     unset is_dont_get_ip
     [[ $is_dont_auto_exit ]] && unset is_config_file
 }
@@ -696,7 +808,7 @@ uninstall() {
     fi
     manage stop &>/dev/null
     manage disable &>/dev/null
-    rm -rf $is_core_dir $is_log_dir $is_sh_bin ${is_sh_bin/$is_core/sb}
+    rm -rf $is_core_dir $is_log_dir $is_sh_bin ${is_sh_bin/$is_core/sb} $is_caddy_conf/sub.conf
     if [[ $is_systemd ]]; then
         rm -f /lib/systemd/system/$is_core.service
     elif [[ $is_openrc ]]; then
@@ -902,6 +1014,9 @@ add() {
     }
 
     # remove old protocol args
+    if [[ ! $is_change ]]; then
+        unset is_outbound_server is_outbound_port is_outbound_type is_outbound_user is_outbound_pass
+    fi
     if [[ $is_set_new_protocol ]]; then
         case $is_old_net in
         h2 | ws | httpupgrade)
@@ -1137,6 +1252,13 @@ get() {
             [[ $is_protocol == 'anytls' ]] && {
                 is_anytls_domain=$(jq -r '(.inbounds[0].tls.certificate_provider.domain[0] // .inbounds[0].tls.acme.domain[0]) // empty' <<<$is_json_str 2>/dev/null)
             }
+
+            # extract custom outbound
+            unset is_outbound_server is_outbound_port is_outbound_type is_outbound_user is_outbound_pass
+            is_outbound_raw=$(jq -r '(.outbounds[]? | select(.tag != null and (.tag | startswith("out-")))) | [.type, .server, (.server_port|tostring), (.username//""), (.password//"")] | @tsv' <<<$is_json_str 2>/dev/null)
+            if [[ $is_outbound_raw ]]; then
+                IFS=$'\t' read -r is_outbound_type is_outbound_server is_outbound_port is_outbound_user is_outbound_pass <<< "$is_outbound_raw"
+            fi
 
             is_config_name=$is_config_file
 
@@ -1470,6 +1592,17 @@ info() {
         is_url="socks://$(echo -n ${is_socks_user}:${is_socks_pass} | base64 -w 0)@${is_addr}:${port}#233boy-$net-${is_addr}"
         ;;
     esac
+    if [[ $net != 'direct' ]]; then
+        is_can_change+=(13)
+        is_info_show+=(22)
+        if [[ $is_outbound_server && $is_outbound_port ]]; then
+            is_outbound_info_desc="$is_outbound_server:$is_outbound_port (${is_outbound_type:-socks})"
+            [[ $is_outbound_user ]] && is_outbound_info_desc="${is_outbound_user}@$is_outbound_info_desc"
+        else
+            is_outbound_info_desc="direct (默认)"
+        fi
+        is_info_str+=("$is_outbound_info_desc")
+    fi
     [[ $is_dont_show_info || $is_gen || $is_dont_auto_exit ]] && return # dont show info
     msg "-------------- $is_config_name -------------"
     for ((i = 0; i < ${#is_info_show[@]}; i++)); do
@@ -1634,7 +1767,7 @@ is_main_menu() {
         show_help
         ;;
     9)
-        ask list is_do_other "启用BBR 查看日志 测试运行 重装脚本 设置DNS"
+        ask list is_do_other "启用BBR 查看日志 测试运行 重装脚本 设置DNS 管理订阅"
         case $REPLY in
         1)
             load bbr.sh
@@ -1653,6 +1786,10 @@ is_main_menu() {
         5)
             load dns.sh
             dns_set
+            ;;
+        6)
+            load sub.sh
+            sub_main
             ;;
         esac
         ;;
@@ -1781,6 +1918,10 @@ main() {
         ;;
     ssss | ss2022)
         get $@
+        ;;
+    sub | subscription)
+        load sub.sh
+        sub_main ${@:2}
         ;;
     s | status)
         msg "\n$is_core_name $is_core_ver: $is_core_status\n"
