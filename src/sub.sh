@@ -113,8 +113,10 @@ sub_init() {
 sub_info() {
     if [[ ! -f $is_sub_json ]]; then
         warn "当前尚未开启远程订阅功能."
-        ask string y "是否立即开启远程订阅服务? [y/n]:"
-        if [[ ${y,,} == 'y' || ${y,,} == 'yes' ]]; then
+        echo -ne "是否立即开启远程订阅服务? [y/n] (默认 y): "
+        read -r is_sub_choice
+        [[ ! $is_sub_choice ]] && is_sub_choice="y"
+        if [[ ${is_sub_choice,,} == 'y' || ${is_sub_choice,,} == 'yes' ]]; then
             sub_init
         else
             return 0
@@ -228,8 +230,9 @@ sub_del() {
         return 0
     }
     if [[ ! $is_dont_auto_exit ]]; then
-        ask string y "是否确认停用并删除远程订阅服务? [y/n]:"
-        if [[ ${y,,} != 'y' && ${y,,} != 'yes' ]]; then
+        echo -ne "是否确认停用并删除远程订阅服务? [y/n]: "
+        read -r is_del_choice
+        if [[ ${is_del_choice,,} != 'y' && ${is_del_choice,,} != 'yes' ]]; then
             msg "已取消操作."
             return 0
         fi
