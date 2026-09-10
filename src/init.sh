@@ -83,7 +83,11 @@ esac
 is_core=sing-box
 is_core_name=sing-box
 is_core_dir="${SINGBOX_DIR:-/etc/$is_core}"
-is_core_bin=$is_core_dir/bin/$is_core
+is_core_bin="${SINGBOX_BIN:-$is_core_dir/bin/$is_core}"
+if [[ ! -x "$is_core_bin" ]]; then
+    _which_bin=$(type -P sing-box 2>/dev/null || true)
+    [[ -x "$_which_bin" ]] && is_core_bin="$_which_bin"
+fi
 is_core_repo=SagerNet/$is_core
 is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core

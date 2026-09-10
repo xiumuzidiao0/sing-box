@@ -11,6 +11,13 @@ export SINGBOX_DIR="$TEST_DIR"
 mkdir -p "$SINGBOX_DIR/bin" "$SINGBOX_DIR/conf" "$SINGBOX_DIR/sub"
 rm -rf "$SINGBOX_DIR/conf"/*
 
+if [[ ! -f "$SINGBOX_DIR/bin/sing-box" ]]; then
+    _which_sb=$(type -P sing-box || echo "")
+    if [[ -x "$_which_sb" ]]; then
+        cp -f "$_which_sb" "$SINGBOX_DIR/bin/sing-box"
+    fi
+fi
+
 SINGBOX_CMD="$SCRIPT_DIR/sing-box.sh"
 
 pass_count=0
