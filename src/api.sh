@@ -183,6 +183,18 @@ api_info_node() {
     jq -n --argjson node "$node_data" '{ok: true, node: $node}'
 }
 
+api_restart_service() {
+    if [[ $is_systemd ]]; then
+        systemctl restart "$is_core" 2>/dev/null || true
+    elif [[ $is_openrc ]]; then
+        rc-service "$is_core" restart 2>/dev/null || true
+    else
+        pkill -f "$is_core_bin" 2>/dev/null || true
+        sleep 0.5
+        "$is_core_bin" run -c "$is_config_json" -C "$is_conf_dir" &>/dev/null &
+    fi
+}
+
 # Add a new proxy node non-interactively using original project logic
 api_add_node() {
     local in_proto="$1"
@@ -238,6 +250,8 @@ api_add_node() {
 
     [[ -z "$created_name" ]] && api_err "节点创建可能已完成但未找到生成的配置文件"
 
+    api_restart_service
+
     local node_data
     node_data=$(api_node_to_json "$created_name")
 
@@ -272,7 +286,7 @@ api_set_outbound() {
                 ((count++))
             done
         fi
-        manage restart &>/dev/null
+        api_restart_service
 
         # sync subscription
         if [[ -f "$is_sub_json" ]]; then
@@ -296,7 +310,7 @@ api_set_outbound() {
         fi
 
         change "$target" out "$outbound" &>/dev/null
-        manage restart &>/dev/null
+        api_restart_service
 
         if [[ -f "$is_sub_json" ]]; then
             load sub.sh
@@ -334,7 +348,7 @@ api_del_node() {
                 deleted+=("$conf")
             done
         fi
-        manage restart &>/dev/null
+        api_restart_service
         if [[ -f "$is_sub_json" ]]; then
             load sub.sh
             sub_sync &>/dev/null
@@ -353,7 +367,7 @@ api_del_node() {
         fi
 
         del "$target" &>/dev/null
-        manage restart &>/dev/null
+        api_restart_service
         if [[ -f "$is_sub_json" ]]; then
             load sub.sh
             sub_sync &>/dev/null
