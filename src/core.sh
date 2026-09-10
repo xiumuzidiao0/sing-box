@@ -1014,7 +1014,7 @@ add() {
     }
 
     # remove old protocol args
-    if [[ ! $is_change ]]; then
+    if [[ ! $is_change && ! $is_api_outbound ]]; then
         unset is_outbound_server is_outbound_port is_outbound_type is_outbound_user is_outbound_pass
     fi
     if [[ $is_set_new_protocol ]]; then
@@ -1042,7 +1042,7 @@ add() {
 
     # prefer args.
     if [[ $2 ]]; then
-        for v in is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port; do
+        for v in is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_servername is_use_socks_user is_use_socks_pass; do
             [[ ${!v} == 'auto' ]] && unset $v
         done
 
@@ -1803,6 +1803,10 @@ is_main_menu() {
 # check prefer args, if not exist prefer args and show main menu
 main() {
     case $1 in
+    api)
+        load api.sh
+        api_main ${@:2}
+        ;;
     a | add | gen | no-auto-tls)
         [[ $1 == 'gen' ]] && is_gen=1
         [[ $1 == 'no-auto-tls' ]] && is_no_auto_tls=1

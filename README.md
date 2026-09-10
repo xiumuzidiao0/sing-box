@@ -80,6 +80,7 @@ Usage: sing-box [options]... [args]...
    d, del [name]                                   删除配置**
    i, info [name]                                  查看配置
    sub, subscription [new | update | port | del]   远程文件订阅管理
+   api [list | add | out | del | sub | status]     对外控制 API 接口 (JSON)
    qr [name]                                       二维码信息
    url [name]                                      URL 信息
    log                                             查看日志

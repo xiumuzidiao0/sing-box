@@ -49,7 +49,13 @@ warn() {
 
 # load bash script.
 load() {
-    . $is_sh_dir/src/$1
+    if [[ -n "$is_sh_dir" && -f "$is_sh_dir/src/$1" ]]; then
+        . "$is_sh_dir/src/$1"
+    elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/$1" ]]; then
+        . "$(dirname "${BASH_SOURCE[0]}")/$1"
+    else
+        . "/etc/sing-box/sh/src/$1"
+    fi
 }
 
 # wget add --no-check-certificate
@@ -76,13 +82,13 @@ esac
 
 is_core=sing-box
 is_core_name=sing-box
-is_core_dir=/etc/$is_core
+is_core_dir="${SINGBOX_DIR:-/etc/$is_core}"
 is_core_bin=$is_core_dir/bin/$is_core
 is_core_repo=SagerNet/$is_core
 is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
-is_sh_dir=$is_core_dir/sh
+is_sh_dir="${is_sh_dir:-$is_core_dir/sh}"
 is_sh_repo=$author/$is_core
 is_pkg="wget unzip tar qrencode bash"
 is_config_json=$is_core_dir/config.json
@@ -102,18 +108,23 @@ is_http_port=80
 is_https_port=443
 
 # core ver
-is_core_ver=$($is_core_bin version | head -n1 | cut -d " " -f3)
+if [[ -x "$is_core_bin" ]]; then
+    is_core_ver=$($is_core_bin version 2>/dev/null | head -n1 | cut -d " " -f3)
+else
+    is_core_ver="not-installed"
+fi
 
 # tmp tls key
 is_tls_cer=$is_core_dir/bin/tls.cer
 is_tls_key=$is_core_dir/bin/tls.key
-[[ ! -f $is_tls_cer || ! -f $is_tls_key ]] && {
+if [[ -x "$is_core_bin" && (! -f "$is_tls_cer" || ! -f "$is_tls_key") ]]; then
+    mkdir -p "$is_core_dir/bin" 2>/dev/null
     is_tls_tmp=${is_tls_key/key/tmp}
-    $is_core_bin generate tls-keypair tls -m 456 >$is_tls_tmp
-    awk '/BEGIN PRIVATE KEY/,/END PRIVATE KEY/' $is_tls_tmp >$is_tls_key
-    awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' $is_tls_tmp >$is_tls_cer
-    rm $is_tls_tmp
-}
+    $is_core_bin generate tls-keypair tls -m 456 >$is_tls_tmp 2>/dev/null
+    awk '/BEGIN PRIVATE KEY/,/END PRIVATE KEY/' $is_tls_tmp >$is_tls_key 2>/dev/null
+    awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' $is_tls_tmp >$is_tls_cer 2>/dev/null
+    rm -f $is_tls_tmp 2>/dev/null
+fi
 
 if [[ $(pgrep -f $is_core_bin) ]]; then
     is_core_status=$(_green running)

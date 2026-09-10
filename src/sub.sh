@@ -84,7 +84,7 @@ sub_sync() {
     if [[ -f $tmp_file ]]; then
         mv -f "$tmp_file" "$sub_file"
     else
-        touch "$sub_file"
+        > "$sub_file"
     fi
     chmod 644 "$sub_file" 2>/dev/null
 }

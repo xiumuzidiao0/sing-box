@@ -1,0 +1,675 @@
+#!/bin/bash
+
+# sing-box external control API module
+# Designed for seamless integration with AimiliVPN & external management consoles
+# Returns standard JSON outputs for all programmatic operations
+
+api_err() {
+    local msg="$1"
+    local code="${2:-1}"
+    jq -n --arg error "$msg" --argjson code "$code" '{ok: false, code: $code, error: $error}'
+    exit "$code"
+}
+
+api_ok() {
+    local data="${1:-{}}"
+    jq -n --argjson data "$data" '{ok: true, code: 0} + $data'
+}
+
+# Convert an inbound configuration file to a clean JSON object
+api_node_to_json() {
+    local conf_file="$1"
+    conf_file=$(basename "$conf_file")
+    local full_path="$is_conf_dir/$conf_file"
+    [[ ! -f "$full_path" ]] && return 1
+
+    # Temporarily suppress human-oriented stdout
+    local old_dont_show="$is_dont_show_info"
+    local old_dont_exit="$is_dont_auto_exit"
+    is_dont_show_info=1
+    is_dont_auto_exit=1
+
+    # Reset parsed variables
+    unset is_protocol port uuid password username ss_method ss_password door_port door_addr
+    unset net_type path host is_servername is_private_key is_public_key is_url net
+    unset is_outbound_server is_outbound_port is_outbound_type is_outbound_user is_outbound_pass
+
+    info "$conf_file" &>/dev/null
+
+    is_dont_show_info="$old_dont_show"
+    is_dont_auto_exit="$old_dont_exit"
+
+    local outbound_str="direct"
+    local ob_type="${is_outbound_type:-direct}"
+    local ob_server="${is_outbound_server:-}"
+    local ob_port="${is_outbound_port:-0}"
+    local ob_user="${is_outbound_user:-}"
+    local ob_pass="${is_outbound_pass:-}"
+
+    if [[ -n "$ob_server" && "$ob_port" -gt 0 ]]; then
+        if [[ "$ob_type" == "http" ]]; then
+            outbound_str="http://${ob_server}:${ob_port}"
+        else
+            outbound_str="socks5://${ob_server}:${ob_port}"
+        fi
+        if [[ -n "$ob_user" ]]; then
+            outbound_str="${ob_type}://${ob_user}:${ob_pass}@${ob_server}:${ob_port}"
+        fi
+    fi
+
+    local node_proto="${is_protocol:-unknown}"
+    if [[ "$net" == "reality" ]]; then
+        node_proto="VLESS-REALITY"
+    elif [[ "$net" == "rh2" ]]; then
+        node_proto="VLESS-HTTP2-REALITY"
+    elif [[ "$net" == "tuic" ]]; then
+        node_proto="TUIC"
+    elif [[ "$net" == "hysteria2" || "$net" =~ hy* ]]; then
+        node_proto="Hysteria2"
+    elif [[ "$net" == "ss" ]]; then
+        node_proto="Shadowsocks"
+    elif [[ "$net" == "trojan" ]]; then
+        node_proto="Trojan"
+    elif [[ "$net" == "anytls" ]]; then
+        node_proto="AnyTLS"
+    elif [[ "$net" == "socks" ]]; then
+        node_proto="Socks"
+    elif [[ "$net" == "direct" ]]; then
+        node_proto="Direct"
+    elif [[ "$is_protocol" == "vmess" ]]; then
+        node_proto="VMess-${net^^}"
+    elif [[ "$is_protocol" == "vless" ]]; then
+        node_proto="VLESS-${net^^}"
+    fi
+
+    jq -n \
+        --arg name "$conf_file" \
+        --arg tag "$conf_file" \
+        --arg protocol "$node_proto" \
+        --arg raw_proto "${is_protocol:-}" \
+        --arg net "${net:-tcp}" \
+        --argjson port "${port:-0}" \
+        --arg address "${is_addr:-}" \
+        --arg uuid "${uuid:-}" \
+        --arg password "${password:-}" \
+        --arg username "${username:-${is_socks_user:-}}" \
+        --arg ss_method "${ss_method:-}" \
+        --arg sni "${is_servername:-}" \
+        --arg host "${host:-}" \
+        --arg path "${path:-}" \
+        --arg pbk "${is_public_key:-}" \
+        --arg flow "${is_flow:-}" \
+        --arg network "${is_net_type:-${net:-tcp}}" \
+        --arg outbound "$outbound_str" \
+        --arg outbound_type "$ob_type" \
+        --arg outbound_server "$ob_server" \
+        --argjson outbound_port "${ob_port:-0}" \
+        --arg outbound_user "$ob_user" \
+        --arg url "${is_url:-}" \
+        '{
+            name: $name,
+            tag: $tag,
+            protocol: $protocol,
+            raw_protocol: $raw_proto,
+            network: $network,
+            port: $port,
+            address: $address,
+            uuid: $uuid,
+            password: $password,
+            username: $username,
+            ss_method: $ss_method,
+            sni: $sni,
+            host: $host,
+            path: $path,
+            pbk: $pbk,
+            flow: $flow,
+            outbound: $outbound,
+            outbound_type: $outbound_type,
+            outbound_server: $outbound_server,
+            outbound_port: $outbound_port,
+            outbound_user: $outbound_user,
+            url: $url
+        }'
+}
+
+# List all nodes in JSON
+api_list_nodes() {
+    local node_list=()
+    if [[ -d "$is_conf_dir" ]]; then
+        local confs
+        confs=$(ls "$is_conf_dir" 2>/dev/null | grep .json$ | sed '/dynamic-port-.*-link/d')
+        for conf in $confs; do
+            local item
+            item=$(api_node_to_json "$conf")
+            if [[ -n "$item" ]]; then
+                node_list+=("$item")
+            fi
+        done
+    fi
+
+    local joined_nodes="[]"
+    if [[ ${#node_list[@]} -gt 0 ]]; then
+        joined_nodes=$(printf '%s\n' "${node_list[@]}" | jq -s '.')
+    fi
+
+    jq -n --argjson nodes "$joined_nodes" \
+          '{ok: true, count: ($nodes | length), nodes: $nodes}'
+}
+
+# Get detailed info for a single node in JSON
+api_info_node() {
+    local name="$1"
+    [[ -z "$name" ]] && api_err "缺少节点名称参数 (name)"
+
+    # Add .json suffix if missing
+    [[ "$name" != *.json ]] && name="${name}.json"
+
+    local full_path="$is_conf_dir/$name"
+    if [[ ! -f "$full_path" ]]; then
+        # Try finding by partial match
+        local match
+        match=$(ls "$is_conf_dir" 2>/dev/null | grep -i "$name" | head -n1)
+        if [[ -n "$match" && -f "$is_conf_dir/$match" ]]; then
+            name="$match"
+        else
+            api_err "找不到指定的节点配置文件: $name"
+        fi
+    fi
+
+    local node_data
+    node_data=$(api_node_to_json "$name")
+    [[ -z "$node_data" ]] && api_err "解析节点配置失败: $name"
+
+    jq -n --argjson node "$node_data" '{ok: true, node: $node}'
+}
+
+# Add a new proxy node non-interactively using original project logic
+api_add_node() {
+    local in_proto="$1"
+    local in_port="${2:-auto}"
+    local in_arg3="${3:-auto}"
+    local in_arg4="${4:-auto}"
+    local in_outbound="${5:-}"
+
+    [[ -z "$in_proto" ]] && api_err "缺少代理协议参数 (protocol)，可选: reality, hy2, tuic, ss, trojan, anytls, socks, direct"
+
+    # Set non-interactive flags
+    is_dont_show_info=1
+    is_dont_auto_exit=1
+    is_no_del_msg=1
+
+    # Reset any inherited global state
+    unset port uuid password host path ss_method is_servername is_socks_user is_socks_pass
+    unset is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_servername is_use_socks_user is_use_socks_pass
+
+    # If outbound specified, parse and preserve it
+    if [[ -n "$in_outbound" ]]; then
+        parse_outbound "$in_outbound"
+        is_api_outbound=1
+    else
+        unset is_outbound_server is_outbound_port is_outbound_type is_outbound_user is_outbound_pass
+        unset is_api_outbound
+    fi
+
+    # Snapshot existing files before addition
+    local before_files
+    before_files=$(ls -1 "$is_conf_dir" 2>/dev/null | grep '\.json$' | sort || true)
+
+    # Execute original add logic without modifying core generation template
+    add "$in_proto" "$in_port" "$in_arg3" "$in_arg4" &>/dev/null
+    local ret=$?
+    if [[ $ret -ne 0 ]]; then
+        unset is_api_outbound
+        api_err "创建节点失败，返回状态码: $ret"
+    fi
+    unset is_api_outbound
+
+    local after_files
+    after_files=$(ls -1 "$is_conf_dir" 2>/dev/null | grep '\.json$' | sort || true)
+
+    local created_name
+    created_name=$(comm -13 <(echo "$before_files") <(echo "$after_files") | head -n1 || true)
+    if [[ -z "$created_name" || ! -f "$is_conf_dir/$created_name" ]]; then
+        created_name="$is_config_name"
+    fi
+    if [[ -z "$created_name" || ! -f "$is_conf_dir/$created_name" ]]; then
+        created_name=$(ls -t "$is_conf_dir" 2>/dev/null | grep '\.json$' | head -n1 || true)
+    fi
+
+    [[ -z "$created_name" ]] && api_err "节点创建可能已完成但未找到生成的配置文件"
+
+    local node_data
+    node_data=$(api_node_to_json "$created_name")
+
+    jq -n \
+        --arg msg "节点创建成功" \
+        --arg target "$created_name" \
+        --argjson node "$node_data" \
+        '{ok: true, msg: $msg, target: $target, node: $node}'
+}
+
+# Update outbound exit of existing node(s) to local proxy (e.g. 127.0.0.1:7928) or direct
+api_set_outbound() {
+    local target="$1"
+    local outbound="$2"
+
+    [[ -z "$target" ]] && api_err "缺少目标节点参数 (target: 节点文件名或 'all')"
+    [[ -z "$outbound" ]] && api_err "缺少出站出口参数 (outbound)，例如: 127.0.0.1:7928, socks5://127.0.0.1:7928, http://127.0.0.1:7928 或 direct"
+
+    is_dont_show_info=1
+    is_dont_auto_exit=1
+    is_no_del_msg=1
+
+    if [[ "${target,,}" == "all" ]]; then
+        local count=0
+        local updated=()
+        if [[ -d "$is_conf_dir" ]]; then
+            local confs
+            confs=$(ls "$is_conf_dir" 2>/dev/null | grep .json$ | sed '/dynamic-port-.*-link/d')
+            for conf in $confs; do
+                change "$conf" out "$outbound" &>/dev/null
+                updated+=("$conf")
+                ((count++))
+            done
+        fi
+        manage restart &>/dev/null
+
+        # sync subscription
+        if [[ -f "$is_sub_json" ]]; then
+            load sub.sh
+            sub_sync &>/dev/null
+        fi
+
+        jq -n \
+            --arg msg "已更新全部节点出站出口" \
+            --arg outbound "$outbound" \
+            --argjson count "$count" \
+            --argjson targets "$(printf '%s\n' "${updated[@]}" | jq -R . | jq -s .)" \
+            '{ok: true, msg: $msg, outbound: $outbound, updated_count: $count, targets: $targets}'
+    else
+        [[ "$target" != *.json ]] && target="${target}.json"
+        local full_path="$is_conf_dir/$target"
+        if [[ ! -f "$full_path" ]]; then
+            local match
+            match=$(ls "$is_conf_dir" 2>/dev/null | grep -i "$target" | head -n1)
+            [[ -n "$match" ]] && target="$match" || api_err "找不到指定的节点配置文件: $target"
+        fi
+
+        change "$target" out "$outbound" &>/dev/null
+        manage restart &>/dev/null
+
+        if [[ -f "$is_sub_json" ]]; then
+            load sub.sh
+            sub_sync &>/dev/null
+        fi
+
+        local node_data
+        node_data=$(api_node_to_json "$target")
+
+        jq -n \
+            --arg msg "已更新节点出站出口" \
+            --arg target "$target" \
+            --arg outbound "$outbound" \
+            --argjson node "$node_data" \
+            '{ok: true, msg: $msg, target: $target, outbound: $outbound, node: $node}'
+    fi
+}
+
+# Delete node(s)
+api_del_node() {
+    local target="$1"
+    [[ -z "$target" ]] && api_err "缺少需要删除的目标参数 (name 或 'all')"
+
+    is_dont_show_info=1
+    is_dont_auto_exit=1
+    is_no_del_msg=1
+
+    if [[ "${target,,}" == "all" ]]; then
+        local deleted=()
+        if [[ -d "$is_conf_dir" ]]; then
+            local confs
+            confs=$(ls "$is_conf_dir" 2>/dev/null | grep .json$ | sed '/dynamic-port-.*-link/d')
+            for conf in $confs; do
+                del "$conf" &>/dev/null
+                deleted+=("$conf")
+            done
+        fi
+        manage restart &>/dev/null
+        if [[ -f "$is_sub_json" ]]; then
+            load sub.sh
+            sub_sync &>/dev/null
+        fi
+        jq -n \
+            --arg msg "已清空全部代理节点" \
+            --argjson deleted "$(printf '%s\n' "${deleted[@]}" | jq -R . | jq -s .)" \
+            '{ok: true, msg: $msg, deleted: $deleted}'
+    else
+        [[ "$target" != *.json ]] && target="${target}.json"
+        local full_path="$is_conf_dir/$target"
+        if [[ ! -f "$full_path" ]]; then
+            local match
+            match=$(ls "$is_conf_dir" 2>/dev/null | grep -i "$target" | head -n1)
+            [[ -n "$match" ]] && target="$match" || api_err "找不到指定的节点配置文件: $target"
+        fi
+
+        del "$target" &>/dev/null
+        manage restart &>/dev/null
+        if [[ -f "$is_sub_json" ]]; then
+            load sub.sh
+            sub_sync &>/dev/null
+        fi
+
+        jq -n \
+            --arg msg "节点删除成功" \
+            --arg target "$target" \
+            '{ok: true, msg: $msg, target: $target}'
+    fi
+}
+
+# Subscription API management
+api_sub_manage() {
+    local action="${1:-get}"
+    load sub.sh
+
+    case "${action,,}" in
+    get | info | show | status)
+        if [[ ! -f "$is_sub_json" ]]; then
+            jq -n '{ok: true, enabled: false, msg: "远程订阅服务尚未开启", node_count: 0, nodes: []}'
+            return 0
+        fi
+
+        local port token filename sub_file host_ip sub_url
+        port=$(jq -r '.port // empty' "$is_sub_json" 2>/dev/null)
+        token=$(jq -r '.token // empty' "$is_sub_json" 2>/dev/null)
+        filename=$(jq -r '.filename // empty' "$is_sub_json" 2>/dev/null)
+
+        if [[ -z "$port" || -z "$token" || -z "$filename" ]]; then
+            api_err "订阅配置文件 ($is_sub_json) 损坏或格式错误"
+        fi
+
+        sub_file="${is_sub_dir}/${token}/${filename}"
+        [[ ! -f "$sub_file" ]] && sub_sync &>/dev/null
+
+        get_ip
+        host_ip="$ip"
+        [[ $(grep ":" <<<"$ip") ]] && host_ip="[$ip]"
+        sub_url="http://${host_ip}:${port}/${token}/${filename}"
+
+        local node_urls=()
+        if [[ -f "$sub_file" ]]; then
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && node_urls+=("$line")
+            done < "$sub_file"
+        fi
+
+        local is_caddy_run=false
+        if [[ -n "$is_caddy_bin" && $(pgrep -f "$is_caddy_bin") ]]; then
+            is_caddy_run=true
+        fi
+
+        local joined_urls="[]"
+        if [[ ${#node_urls[@]} -gt 0 ]]; then
+            joined_urls=$(printf '%s\n' "${node_urls[@]}" | jq -R . | jq -s .)
+        fi
+
+        jq -n \
+            --argjson enabled true \
+            --arg sub_url "$sub_url" \
+            --argjson port "$port" \
+            --arg token "$token" \
+            --arg filename "$filename" \
+            --argjson node_count "${#node_urls[@]}" \
+            --argjson nodes "$joined_urls" \
+            --argjson caddy_running "$is_caddy_run" \
+            '{
+                ok: true,
+                enabled: $enabled,
+                sub_url: $sub_url,
+                port: $port,
+                token: $token,
+                filename: $filename,
+                node_count: $node_count,
+                nodes: $nodes,
+                caddy_running: $caddy_running
+            }'
+        ;;
+
+    sync | update)
+        sub_sync &>/dev/null
+        api_sub_manage get
+        ;;
+
+    init | new | start)
+        local custom_port="$2"
+        if [[ ! -f "$is_sub_json" ]]; then
+            local p token hname fname
+            p="$custom_port"
+            [[ -z "$p" ]] && p=$(sub_port_gen)
+            token=$(sub_token_gen)
+            hname=$(hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null || echo "singbox")
+            hname=$(echo "$hname" | tr -cd 'a-zA-Z0-9_-')
+            [[ -z "$hname" ]] && hname="singbox"
+            fname="${hname}_singbox.yaml"
+
+            mkdir -p "${is_sub_dir}/${token}"
+            jq -n --argjson port "$p" \
+                  --arg token "$token" \
+                  --arg filename "$fname" \
+                  '{port: $port, token: $token, filename: $filename, enabled: true}' >"$is_sub_json"
+
+            sub_caddy_apply "$p" &>/dev/null
+            sub_sync &>/dev/null
+        fi
+        api_sub_manage get
+        ;;
+
+    reset)
+        sub_reset &>/dev/null
+        api_sub_manage get
+        ;;
+
+    port)
+        local new_port="$2"
+        [[ -z "$new_port" ]] && api_err "缺少新端口参数"
+        sub_port "$new_port" &>/dev/null
+        api_sub_manage get
+        ;;
+
+    del | disable | stop)
+        sub_del &>/dev/null
+        jq -n '{ok: true, msg: "远程订阅服务已关闭并清除配置"}'
+        ;;
+
+    *)
+        api_err "未知订阅操作: $action，可选: get, sync, init, reset, port, del"
+        ;;
+    esac
+}
+
+# Status API
+api_status() {
+    local core_run=false
+    local core_pid=0
+    local pids
+    pids=$(pgrep -f "$is_core_bin" 2>/dev/null)
+    if [[ -n "$pids" ]]; then
+        core_run=true
+        core_pid=$(echo "$pids" | head -n1)
+    fi
+
+    local caddy_run=false
+    local caddy_pid=0
+    if [[ -n "$is_caddy_bin" ]]; then
+        local cpids
+        cpids=$(pgrep -f "$is_caddy_bin" 2>/dev/null)
+        if [[ -n "$cpids" ]]; then
+            caddy_run=true
+            caddy_pid=$(echo "$cpids" | head -n1)
+        fi
+    fi
+
+    local n_count=0
+    if [[ -d "$is_conf_dir" ]]; then
+        n_count=$(ls "$is_conf_dir" 2>/dev/null | grep -c .json$ || true)
+    fi
+
+    local sub_on=false
+    [[ -f "$is_sub_json" ]] && sub_on=true
+
+    jq -n \
+        --arg name "${is_core_name:-sing-box}" \
+        --arg version "${is_core_ver:-unknown}" \
+        --arg script_ver "${is_sh_ver:-unknown}" \
+        --argjson core_running "$core_run" \
+        --argjson core_pid "$core_pid" \
+        --argjson caddy_running "$caddy_run" \
+        --argjson caddy_pid "$caddy_pid" \
+        --arg caddy_ver "${is_caddy_ver:-}" \
+        --argjson node_count "$n_count" \
+        --argjson sub_enabled "$sub_on" \
+        '{
+            ok: true,
+            core: {
+                name: $name,
+                version: $version,
+                script_version: $script_ver,
+                running: $core_running,
+                pid: $core_pid
+            },
+            caddy: {
+                running: $caddy_running,
+                pid: $caddy_pid,
+                version: $caddy_ver
+            },
+            node_count: $node_count,
+            subscription_enabled: $sub_enabled
+        }'
+}
+
+# List supported protocols
+api_protocols() {
+    cat <<'EOF' | jq .
+{
+    "ok": true,
+    "protocols": [
+        {
+            "id": "reality",
+            "name": "VLESS-REALITY",
+            "recommended": true,
+            "transport": "tcp",
+            "tls": "reality",
+            "description": "顶级抗审查伪装协议，直接借用海外名站 TLS 指纹，无需自行配置域名",
+            "args": ["port", "uuid", "sni"]
+        },
+        {
+            "id": "hy2",
+            "name": "Hysteria2",
+            "recommended": true,
+            "transport": "udp",
+            "tls": "self-signed",
+            "description": "基于定制 QUIC 协议，针对恶劣网络与丢包环境极速狂飙",
+            "args": ["port", "password"]
+        },
+        {
+            "id": "tuic",
+            "name": "TUIC",
+            "recommended": true,
+            "transport": "quic",
+            "tls": "self-signed",
+            "description": "基于 QUIC 拥塞控制 BBR 协议，低延迟抗抖动",
+            "args": ["port", "uuid"]
+        },
+        {
+            "id": "ss",
+            "name": "Shadowsocks",
+            "recommended": false,
+            "transport": "tcp/udp",
+            "tls": "none",
+            "description": "现代 Shadowsocks 2022 协议，简洁高效",
+            "args": ["port", "password", "method"]
+        },
+        {
+            "id": "trojan",
+            "name": "Trojan",
+            "recommended": false,
+            "transport": "tcp",
+            "tls": "tls",
+            "description": "经典伪装 HTTPS 协议",
+            "args": ["port", "password"]
+        },
+        {
+            "id": "anytls",
+            "name": "AnyTLS",
+            "recommended": false,
+            "transport": "tcp",
+            "tls": "acme/tls",
+            "description": "多路径自适应 TLS 传输协议",
+            "args": ["port", "password", "domain"]
+        },
+        {
+            "id": "socks",
+            "name": "Socks5",
+            "recommended": false,
+            "transport": "tcp",
+            "tls": "none",
+            "description": "标准 Socks5 代理入站",
+            "args": ["port", "username", "password"]
+        }
+    ]
+}
+EOF
+}
+
+# API dispatcher
+api_main() {
+    local action="${1:-help}"
+    case "${action,,}" in
+    list | nodes | get-nodes)
+        api_list_nodes
+        ;;
+    info | node | get-node)
+        api_info_node "$2"
+        ;;
+    add | new | create)
+        api_add_node "${@:2}"
+        ;;
+    out | outbound | set-outbound)
+        api_set_outbound "$2" "$3"
+        ;;
+    del | rm | delete)
+        api_del_node "$2"
+        ;;
+    sub | subscription)
+        api_sub_manage "${@:2}"
+        ;;
+    status | ping)
+        api_status
+        ;;
+    protocols | protos)
+        api_protocols
+        ;;
+    help | --help | -h)
+        cat <<EOF
+AimiliVPN & sing-box 对外控制 API 接口:
+用法: $is_core api <action> [args...]
+
+可用指令:
+   api list                             以 JSON 格式输出所有活跃代理节点详情
+   api info <name>                      获取指定节点详细参数与客户端连接 URL
+   api add <proto> [port] [id] [sni] [outbound]
+                                        无交互快速创建入站节点 (默认 auto 参数)
+                                        示例: $is_core api add reality auto auto auto 127.0.0.1:7928
+   api outbound <name|all> <outbound>   将现有节点链式绑定至 AimiliVPN 本地代理
+                                        示例: $is_core api outbound all 127.0.0.1:7928
+                                        恢复直连: $is_core api outbound all direct
+   api del <name|all>                   删除指定节点或全部节点
+   api sub [get|sync|init|reset|port]   远程订阅链接与节点同步管理
+   api status                           获取 sing-box 进程与 Caddy 运行状态
+   api protocols                        列出支持的抗封锁入站协议列表
+EOF
+        ;;
+    *)
+        api_err "未知 API 操作: $action。获取帮助请执行: $is_core api help"
+        ;;
+    esac
+}
