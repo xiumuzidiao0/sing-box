@@ -170,20 +170,31 @@ install_pkg() {
 download() {
     case $1 in
     core)
-        [[ ! $is_core_ver ]] && is_core_ver=$(_wget -qO- "https://api.github.com/repos/${is_core_repo}/releases/latest?v=$RANDOM" | grep tag_name | grep -E -o 'v([0-9.]+)')
-        [[ $is_core_ver ]] && link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-${is_core_ver:1}-linux-${is_arch}.tar.gz"
+        if [[ ! $is_core_ver ]]; then
+            is_core_ver=$(_wget -qO- "https://api.github.com/repos/${is_core_repo}/releases/latest?v=$RANDOM" 2>/dev/null | grep tag_name | grep -E -o 'v([0-9.]+)')
+            if [[ ! $is_core_ver ]]; then
+                is_core_ver=$(_wget --max-redirect=0 -S "https://github.com/${is_core_repo}/releases/latest" 2>&1 | grep -i 'Location:' | grep -E -o 'v[0-9.]+' | head -n1)
+            fi
+            if [[ ! $is_core_ver && $(type -P curl) ]]; then
+                is_core_ver=$(curl -sIL -m 10 "https://github.com/${is_core_repo}/releases/latest" 2>/dev/null | grep -i '^location:' | grep -E -o 'v[0-9.]+' | head -n1)
+            fi
+            if [[ ! $is_core_ver ]]; then
+                is_core_ver="v1.14.0"
+            fi
+        fi
+        link="https://github.com/${is_core_repo}/releases/download/${is_core_ver}/${is_core}-${is_core_ver:1}-linux-${is_arch}.tar.gz"
         name=$is_core_name
         tmpfile=$tmpcore
         is_ok=$is_core_ok
         ;;
     sh)
-        link=https://github.com/${is_sh_repo}/archive/refs/heads/main.tar.gz
+        link="https://github.com/${is_sh_repo}/archive/refs/heads/main.tar.gz"
         name="$is_core_name 脚本"
         tmpfile=$tmpsh
         is_ok=$is_sh_ok
         ;;
     jq)
-        link=https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_arch
+        link="https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-$is_arch"
         name="jq"
         tmpfile=$tmpjq
         is_ok=$is_jq_ok
@@ -191,9 +202,28 @@ download() {
     esac
 
     [[ $link ]] && {
-        msg warn "下载 ${name} > ${link}"
-        if _wget -t 3 -q -c $link -O $tmpfile; then
-            mv -f $tmpfile $is_ok
+        local candidate_urls=("$link")
+        if [[ "$link" =~ ^https://github\.com/ ]]; then
+            candidate_urls+=(
+                "https://ghproxy.net/${link}"
+                "https://mirror.ghproxy.com/${link}"
+                "https://gh-proxy.com/${link}"
+            )
+        fi
+
+        local dl_success=0
+        for url_item in "${candidate_urls[@]}"; do
+            msg warn "下载 ${name} > ${url_item}"
+            if _wget -t 2 -T 20 -q -c "$url_item" -O "$tmpfile" && [[ -s "$tmpfile" ]]; then
+                dl_success=1
+                break
+            fi
+        done
+
+        if [[ $dl_success -eq 1 ]]; then
+            mv -f "$tmpfile" "$is_ok"
+        else
+            msg err "下载 ${name} 失败 (所有镜像源均不可达)"
         fi
     }
 }

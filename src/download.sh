@@ -13,7 +13,19 @@ get_latest_version() {
         url="https://api.github.com/repos/$is_caddy_repo/releases/latest?v=$RANDOM"
         ;;
     esac
-    latest_ver=$(_wget -qO- $url | grep tag_name | grep -E -o 'v([0-9.]+)')
+    latest_ver=$(_wget -qO- $url 2>/dev/null | grep tag_name | grep -E -o 'v([0-9.]+)')
+    if [[ ! $latest_ver ]]; then
+        case $1 in
+        core)
+            latest_ver=$(curl -sIL -m 10 "https://github.com/${is_core_repo}/releases/latest" 2>/dev/null | grep -i '^location:' | grep -E -o 'v[0-9.]+' | head -n1)
+            [[ ! $latest_ver ]] && latest_ver="v1.14.0"
+            ;;
+        caddy)
+            latest_ver=$(curl -sIL -m 10 "https://github.com/${is_caddy_repo}/releases/latest" 2>/dev/null | grep -i '^location:' | grep -E -o 'v[0-9.]+' | head -n1)
+            [[ ! $latest_ver ]] && latest_ver="v2.8.4"
+            ;;
+        esac
+    fi
     [[ ! $latest_ver ]] && {
         err "获取 ${name} 最新版本失败."
     }
@@ -60,8 +72,25 @@ download() {
     unset latest_ver
 }
 download_file() {
-    if ! _wget -t 5 -c $link -O $tmpfile; then
+    local candidate_links=("$link")
+    if [[ "$link" =~ ^https://github\.com/ ]]; then
+        candidate_links+=(
+            "https://ghproxy.net/${link}"
+            "https://mirror.ghproxy.com/${link}"
+            "https://gh-proxy.com/${link}"
+        )
+    fi
+
+    local dl_ok=0
+    for l in "${candidate_links[@]}"; do
+        if _wget -t 2 -T 20 -c "$l" -O "$tmpfile" && [[ -s "$tmpfile" ]]; then
+            dl_ok=1
+            break
+        fi
+    done
+
+    if [[ $dl_ok -ne 1 ]]; then
         rm -rf $tmpdir
-        err "\n下载 ${name} 失败.\n"
+        err "\n下载 ${name} 失败 (所有镜像源均不可达).\n"
     fi
 }
