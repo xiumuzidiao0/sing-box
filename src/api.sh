@@ -198,12 +198,45 @@ api_restart_service() {
 # Add a new proxy node non-interactively using original project logic
 api_add_node() {
     local in_proto="$1"
-    local in_port="${2:-auto}"
-    local in_arg3="${3:-auto}"
-    local in_arg4="${4:-auto}"
-    local in_outbound="${5:-}"
+    shift 1 || true
 
     [[ -z "$in_proto" ]] && api_err "缺少代理协议参数 (protocol)，可选: reality, hy2, tuic, ss, trojan, anytls, socks, direct"
+
+    local in_outbound=""
+    local add_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --outbound | -o | --out)
+            in_outbound="$2"
+            shift 2 || shift 1
+            ;;
+        *)
+            add_args+=("$1")
+            shift 1
+            ;;
+        esac
+    done
+
+    # If outbound was not passed with --outbound flag:
+    # Check if the trailing argument is an outbound address (e.g. 127.0.0.1:7928, socks5://..., http://..., or direct)
+    if [[ -z "$in_outbound" && ${#add_args[@]} -gt 0 ]]; then
+        local last_idx=$((${#add_args[@]} - 1))
+        local last_arg="${add_args[$last_idx]}"
+        if [[ "$last_arg" =~ :[0-9]+$ || "${last_arg,,}" =~ ^(direct|none|default|null)$ || "$last_arg" =~ :// ]]; then
+            local p_lower="${in_proto,,}"
+            local max_proto_args=2 # default for hy2, tuic, trojan
+            case "$p_lower" in
+            *reality* | ss | shadowsocks | socks | anytls | direct | *-tls)
+                max_proto_args=3
+                ;;
+            esac
+            if [[ ${#add_args[@]} -gt $max_proto_args ]]; then
+                in_outbound="$last_arg"
+                unset 'add_args[last_idx]'
+            fi
+        fi
+    fi
 
     # Set non-interactive flags
     is_dont_show_info=1
@@ -215,7 +248,7 @@ api_add_node() {
     unset is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_servername is_use_socks_user is_use_socks_pass
 
     # If outbound specified, parse and preserve it
-    if [[ -n "$in_outbound" ]]; then
+    if [[ -n "$in_outbound" && "${in_outbound,,}" != "direct" ]]; then
         parse_outbound "$in_outbound"
         is_api_outbound=1
     else
@@ -228,7 +261,7 @@ api_add_node() {
     before_files=$(ls -1 "$is_conf_dir" 2>/dev/null | grep '\.json$' | sort || true)
 
     # Execute original add logic without modifying core generation template
-    add "$in_proto" "$in_port" "$in_arg3" "$in_arg4" &>/dev/null
+    add "$in_proto" "${add_args[@]}" &>/dev/null
     local ret=$?
     if [[ $ret -ne 0 ]]; then
         unset is_api_outbound
