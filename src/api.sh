@@ -183,7 +183,22 @@ api_info_node() {
     jq -n --argjson node "$node_data" '{ok: true, node: $node}'
 }
 
+api_ensure_config_json() {
+    if [[ -f "$is_config_json" ]]; then
+        local has_final
+        has_final=$(jq -r '.route.final // empty' "$is_config_json" 2>/dev/null)
+        if [[ "$has_final" != "direct" ]]; then
+            local updated
+            updated=$(jq '.outbounds = (if (.outbounds // [] | map(select(.tag == "direct")) | length) > 0 then .outbounds else [{tag:"direct",type:"direct"}] + (.outbounds // []) end) | .route = ((.route // {}) + {final: "direct"})' "$is_config_json" 2>/dev/null)
+            if [[ -n "$updated" ]]; then
+                echo "$updated" > "$is_config_json"
+            fi
+        fi
+    fi
+}
+
 api_restart_service() {
+    api_ensure_config_json
     if [[ $is_systemd ]]; then
         systemctl restart "$is_core" 2>/dev/null || true
     elif [[ $is_openrc ]]; then

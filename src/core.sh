@@ -356,6 +356,12 @@ create() {
                 {inbound: [$in_tag], outbound: $tag}
               ]
             ' <<<$is_new_json)
+        else
+            is_new_json=$(jq --arg in_tag "$is_config_name" '
+              .route.rules = (.route.rules // []) + [
+                {inbound: [$in_tag], outbound: "direct"}
+              ]
+            ' <<<$is_new_json)
         fi
         [[ $is_test_json ]] && return # tmp test
         # only show json, dont save to file.
@@ -414,8 +420,9 @@ create() {
         else
             [[ ! $is_ntp_on ]] && is_ntp=
         fi
-        is_outbounds='outbounds:[{tag:"direct",type:"direct"}]'
-        is_server_config_json=$(jq "{$is_log,$is_dns,$is_ntp$is_outbounds}" <<<{})
+        is_outbounds='outbounds:[{tag:"direct",type:"direct"}],'
+        is_route='route:{final:"direct"}'
+        is_server_config_json=$(jq "{$is_log,$is_dns,$is_ntp$is_outbounds$is_route}" <<<{})
         cat <<<$is_server_config_json >$is_config_json
         manage restart &
         ;;
