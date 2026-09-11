@@ -25,6 +25,7 @@
 - 一键启用 BBR
 - 一键更改伪装网站
 - 一键自定义每个代理节点的出站出口 (SOCKS5/HTTP 链式代理)
+- 原生支持标准 JSON 外部控制 API 接口 (`sing-box api`)，方便第三方系统 (如 AimiliVPN) 自动化调度
 - 一键开启/管理远程文件订阅 (支持随机高位端口与随机安全路径)
 - 一键更改 (端口/UUID/密码/域名/路径/加密方式/SNI/出口/等...)
 - 还有更多...
@@ -129,4 +130,40 @@ Usage: sing-box [options]... [args]...
 谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认
 反馈问题) https://github.com/xiumuzidiao0/sing-box/issues
 文档(doc) https://233boy.com/sing-box/sing-box-script/
+```
+
+# 对外控制 API 接口 (JSON)
+
+本项目内置专为第三方系统集成（如 AimiliVPN Web 控制台）设计的无交互 JSON 控制接口，支持跨进程状态读取与自动化配置管理：
+
+```bash
+# 1. 节点列表查询 (输出 JSON 数组，包含各节点协议、端口、出口、URL等完整信息)
+sing-box api list
+
+# 2. 查询指定节点详情
+sing-box api info <name>
+
+# 3. 快速添加节点 (可指定协议、端口、UUID/密码、伪装域名及链式出口)
+sing-box api add reality auto auto auto 127.0.0.1:7928
+
+# 4. 动态更改节点出口 (支持切换直连 direct 或指定本地 SOCKS5/HTTP 代理)
+sing-box api outbound all http://127.0.0.1:7928
+sing-box api outbound all direct
+
+# 5. 删除节点
+sing-box api del <name|all>
+
+# 6. 远程订阅管理
+sing-box api sub get      # 获取订阅链接与节点状态
+sing-box api sub sync     # 同步当前所有节点到订阅文件
+sing-box api sub init     # 一键初始化并开启远程订阅服务
+
+# 7. 服务运行状态检查
+sing-box api status
+
+# 8. 核心服务重启
+sing-box api restart
+
+# 9. 获取支持的协议列表元数据
+sing-box api protocols
 ```
