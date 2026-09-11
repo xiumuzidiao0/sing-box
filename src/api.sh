@@ -275,6 +275,34 @@ api_add_node() {
     local before_files
     before_files=$(ls -1 "$is_conf_dir" 2>/dev/null | grep '\.json$' | sort || true)
 
+    # Normalize protocol specific arguments for non-interactive creation
+    local p_norm="${in_proto,,}"
+    case "$p_norm" in
+    *-tls | wss | h2 | hu | vws | vh2 | vhu | tws | th2 | thu)
+        local h_arg="${add_args[2]}"
+        local c_arg="${add_args[1]}"
+        if [[ -z "$h_arg" || "$h_arg" == "auto" ]]; then
+            api_err "协议 $in_proto 需要在高级设置中填写已解析到本机的域名 (SNI/Host)"
+        fi
+        add_args=("$h_arg" "$c_arg" "auto")
+        ;;
+    ss | shadowsocks)
+        local p_arg="${add_args[0]:-auto}"
+        local pass_arg="${add_args[1]:-auto}"
+        local m_arg="${add_args[2]:-2022-blake3-aes-128-gcm}"
+        [[ "$m_arg" == "auto" ]] && m_arg="2022-blake3-aes-128-gcm"
+        add_args=("$p_arg" "$pass_arg" "$m_arg")
+        ;;
+    direct | door)
+        local p_arg="${add_args[0]:-auto}"
+        local d_addr="${add_args[1]:-127.0.0.1}"
+        local d_port="${add_args[2]:-7928}"
+        [[ "$d_addr" == "auto" ]] && d_addr="127.0.0.1"
+        [[ "$d_port" == "auto" ]] && d_port="7928"
+        add_args=("$p_arg" "$d_addr" "$d_port")
+        ;;
+    esac
+
     # Execute original add logic without modifying core generation template
     add "$in_proto" "${add_args[@]}" &>/dev/null
     local ret=$?
