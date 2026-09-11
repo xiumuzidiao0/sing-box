@@ -72,9 +72,15 @@ sub_sync() {
         local old_dont_show=$is_dont_show_info
         for conf in $(ls "$is_conf_dir" 2>/dev/null | grep .json$ | sed '/dynamic-port-.*-link/d'); do
             is_dont_show_info=1
-            unset is_protocol is_url net
+            unset is_protocol is_url net host is_anytls_domain is_addr
             info "$conf" &>/dev/null
             if [[ $is_url ]]; then
+                if [[ $is_url =~ @auto[:#] ]]; then
+                    get_ip
+                    is_url="${is_url//@auto:/@$ip:}"
+                    is_url="${is_url//@auto#/@$ip#}"
+                    is_url="${is_url//-auto/-$ip}"
+                fi
                 echo "$is_url" >>"$tmp_file"
             fi
         done

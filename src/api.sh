@@ -31,13 +31,33 @@ api_node_to_json() {
 
     # Reset parsed variables
     unset is_protocol port uuid password username ss_method ss_password door_port door_addr
-    unset net_type path host is_servername is_private_key is_public_key is_url net
+    unset net_type path host is_servername is_private_key is_public_key is_url net is_anytls_domain
     unset is_outbound_server is_outbound_port is_outbound_type is_outbound_user is_outbound_pass
 
     info "$conf_file" &>/dev/null
 
     is_dont_show_info="$old_dont_show"
     is_dont_auto_exit="$old_dont_exit"
+
+    if [[ "$is_protocol" == "anytls" ]]; then
+        if [[ -z "$is_anytls_domain" || "${is_anytls_domain,,}" == "auto" ]]; then
+            unset is_anytls_domain
+            get_ip
+            is_addr="$ip"
+            [[ "$ip" =~ : ]] && is_addr="[$ip]"
+            is_url="anytls://$password@$is_addr:$port?insecure=1&allowInsecure=1#233boy-anytls-$is_addr"
+        fi
+    fi
+    if [[ "$is_addr" == "auto" || -z "$is_addr" ]]; then
+        get_ip
+        is_addr="$ip"
+        [[ "$ip" =~ : ]] && is_addr="[$ip]"
+    fi
+    if [[ "$is_url" =~ @auto[:#] ]]; then
+        is_url="${is_url//@auto:/@$is_addr:}"
+        is_url="${is_url//@auto#/@$is_addr#}"
+        is_url="${is_url//-auto/-$is_addr}"
+    fi
 
     local outbound_str="direct"
     local ob_type="${is_outbound_type:-direct}"
@@ -265,8 +285,8 @@ api_add_node() {
     is_dont_test_host=1
 
     # Reset any inherited global state
-    unset port uuid password host path ss_method is_servername is_socks_user is_socks_pass
-    unset is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_servername is_use_socks_user is_use_socks_pass
+    unset port uuid password host path ss_method is_servername is_socks_user is_socks_pass is_anytls_domain
+    unset is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_servername is_use_socks_user is_use_socks_pass is_anytls_domain
 
     # If outbound specified, parse and preserve it
     if [[ -n "$in_outbound" && "${in_outbound,,}" != "direct" ]]; then
@@ -311,6 +331,19 @@ api_add_node() {
         [[ "$d_addr" == "auto" ]] && d_addr="127.0.0.1"
         [[ "$d_port" == "auto" ]] && d_port="7928"
         add_args=("$p_arg" "$d_addr" "$d_port")
+        ;;
+    anytls*)
+        local p_arg="${add_args[0]:-auto}"
+        local pass_arg="${add_args[1]:-auto}"
+        local dom_arg="${add_args[2]:-}"
+        # If domain is empty, "auto", or does not contain a dot, clear it so AnyTLS runs in IP/self-signed mode
+        if [[ -z "$dom_arg" || "${dom_arg,,}" == "auto" || ! "$dom_arg" =~ \. ]]; then
+            unset is_anytls_domain
+            add_args=("$p_arg" "$pass_arg")
+        else
+            is_anytls_domain="$dom_arg"
+            add_args=("$p_arg" "$pass_arg" "$dom_arg")
+        fi
         ;;
     esac
 

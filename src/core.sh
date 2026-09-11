@@ -1002,7 +1002,7 @@ add() {
     anytls*)
         is_use_port=$2
         is_use_pass=$3
-        [[ $4 ]] && is_anytls_domain=$4
+        [[ $4 && ${4,,} != 'auto' ]] && is_anytls_domain=$4
         is_add_opts="[port] [password] [domain]"
         ;;
     socks)
@@ -1049,7 +1049,7 @@ add() {
 
     # prefer args.
     if [[ $2 ]]; then
-        for v in is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_servername is_use_socks_user is_use_socks_pass; do
+        for v in is_use_port is_use_uuid is_use_host is_use_path is_use_pass is_use_method is_use_door_addr is_use_door_port is_use_servername is_use_socks_user is_use_socks_pass is_anytls_domain; do
             [[ ${!v} == 'auto' ]] && unset $v
         done
 
@@ -1258,6 +1258,7 @@ get() {
             # extract anytls ACME domain
             [[ $is_protocol == 'anytls' ]] && {
                 is_anytls_domain=$(jq -r '(.inbounds[0].tls.certificate_provider.domain[0] // .inbounds[0].tls.acme.domain[0]) // empty' <<<$is_json_str 2>/dev/null)
+                [[ ${is_anytls_domain,,} == 'auto' ]] && unset is_anytls_domain
             }
 
             # extract custom outbound
@@ -1576,7 +1577,7 @@ info() {
         ;;
     anytls)
         is_can_change=(0 1 4)
-        if [[ $is_anytls_domain ]]; then
+        if [[ $is_anytls_domain && ${is_anytls_domain,,} != 'auto' ]]; then
             is_info_show=(0 1 2 10 8)
             is_info_str=($is_protocol $is_anytls_domain $port $password tls)
             is_url="anytls://$password@$is_anytls_domain:$port#233boy-$net-$is_anytls_domain"
