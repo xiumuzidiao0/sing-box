@@ -215,7 +215,7 @@ api_add_node() {
     local in_proto="$1"
     shift 1 || true
 
-    [[ -z "$in_proto" ]] && api_err "缺少代理协议参数 (protocol)，可选: reality, hy2, tuic, ss, trojan, anytls, socks, direct"
+    [[ -z "$in_proto" ]] && api_err "缺少代理协议参数 (protocol)，可选: reality, rh2, hy2, tuic, ss, trojan, anytls, socks, direct, vws, wss, tws, vhu, hu, thu, vh2, h2, th2, ws, tcp, http, quic"
 
     local in_outbound=""
     local add_args=()
@@ -242,7 +242,7 @@ api_add_node() {
             local p_lower="${in_proto,,}"
             local max_proto_args=2 # default for hy2, tuic, trojan
             case "$p_lower" in
-            *reality* | ss | shadowsocks | socks | anytls | direct | *-tls)
+            *reality* | ss | shadowsocks | socks | anytls | direct | *-tls | *ws* | *hu* | *h2*)
                 max_proto_args=3
                 ;;
             esac
@@ -617,65 +617,222 @@ api_protocols() {
         {
             "id": "reality",
             "name": "VLESS-REALITY",
+            "category": "recommended",
             "recommended": true,
             "transport": "tcp",
             "tls": "reality",
-            "description": "顶级抗审查伪装协议，直接借用海外名站 TLS 指纹，无需自行配置域名",
+            "description": "顶级抗审查伪装，直接借用海外权威名站 TLS 指纹，无需自行配置域名",
+            "args": ["port", "uuid", "sni"]
+        },
+        {
+            "id": "rh2",
+            "name": "VLESS-HTTP2-REALITY",
+            "category": "recommended",
+            "recommended": true,
+            "transport": "http2",
+            "tls": "reality",
+            "description": "HTTP/2 多路复用 + REALITY TLS 双重伪装，高并发大吞吐免配域名",
             "args": ["port", "uuid", "sni"]
         },
         {
             "id": "hy2",
             "name": "Hysteria2",
+            "category": "recommended",
             "recommended": true,
             "transport": "udp",
             "tls": "self-signed",
-            "description": "基于定制 QUIC 协议，针对恶劣网络与丢包环境极速狂飙",
+            "description": "基于定制 QUIC 协议，针对跨洋恶劣网络与高丢包极速狂飙",
             "args": ["port", "password"]
         },
         {
             "id": "tuic",
-            "name": "TUIC",
+            "name": "TUIC v5",
+            "category": "recommended",
             "recommended": true,
             "transport": "quic",
             "tls": "self-signed",
-            "description": "基于 QUIC 拥塞控制 BBR 协议，低延迟抗抖动",
+            "description": "基于 QUIC 拥塞控制 BBR 协议，低延迟抗抖动高可靠",
             "args": ["port", "uuid"]
         },
         {
             "id": "ss",
-            "name": "Shadowsocks",
-            "recommended": false,
+            "name": "Shadowsocks 2022",
+            "category": "recommended",
+            "recommended": true,
             "transport": "tcp/udp",
             "tls": "none",
-            "description": "现代 Shadowsocks 2022 协议，简洁高效",
+            "description": "现代 Shadowsocks 2022 规范，性能极高客户端广泛支持",
             "args": ["port", "password", "method"]
         },
         {
             "id": "trojan",
             "name": "Trojan",
+            "category": "popular",
             "recommended": false,
             "transport": "tcp",
             "tls": "tls",
-            "description": "经典伪装 HTTPS 协议",
+            "description": "经典伪装 HTTPS 协议，流量表现为正常安全网页浏览",
             "args": ["port", "password"]
         },
         {
             "id": "anytls",
             "name": "AnyTLS",
+            "category": "popular",
             "recommended": false,
             "transport": "tcp",
             "tls": "acme/tls",
-            "description": "多路径自适应 TLS 传输协议",
+            "description": "多路径自适应 TLS 传输协议，动态流量特征自愈",
             "args": ["port", "password", "domain"]
         },
         {
             "id": "socks",
             "name": "Socks5",
+            "category": "popular",
             "recommended": false,
             "transport": "tcp",
             "tls": "none",
-            "description": "标准 Socks5 代理入站",
+            "description": "标准 Socks5 代理入站，局域网与前置分流首选",
             "args": ["port", "username", "password"]
+        },
+        {
+            "id": "direct",
+            "name": "Direct (端口转发)",
+            "category": "popular",
+            "recommended": false,
+            "transport": "tcp",
+            "tls": "none",
+            "description": "透明 TCP 端口流量中继直通",
+            "args": ["port", "remote_addr", "remote_port"]
+        },
+        {
+            "id": "vws",
+            "name": "VLESS-WS-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "ws",
+            "tls": "tls",
+            "description": "VLESS + WebSocket + TLS，支持 Cloudflare CDN 优选反代免封",
+            "args": ["host", "uuid", "path"]
+        },
+        {
+            "id": "wss",
+            "name": "VMess-WS-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "ws",
+            "tls": "tls",
+            "description": "VMess + WebSocket + TLS，经典 CDN 拯救被墙 IP 方案",
+            "args": ["host", "uuid", "path"]
+        },
+        {
+            "id": "tws",
+            "name": "Trojan-WS-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "ws",
+            "tls": "tls",
+            "description": "Trojan + WebSocket + TLS，结合 CDN 隐藏源站真实地址",
+            "args": ["host", "password", "path"]
+        },
+        {
+            "id": "vhu",
+            "name": "VLESS-HTTPUpgrade-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "httpupgrade",
+            "tls": "tls",
+            "description": "新一代 HTTPUpgrade 传输，比 WS 更省服务端 CPU 资源",
+            "args": ["host", "uuid", "path"]
+        },
+        {
+            "id": "hu",
+            "name": "VMess-HTTPUpgrade-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "httpupgrade",
+            "tls": "tls",
+            "description": "VMess + HTTPUpgrade 现代化高性能传输",
+            "args": ["host", "uuid", "path"]
+        },
+        {
+            "id": "thu",
+            "name": "Trojan-HTTPUpgrade-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "httpupgrade",
+            "tls": "tls",
+            "description": "Trojan + HTTPUpgrade 传输",
+            "args": ["host", "password", "path"]
+        },
+        {
+            "id": "vh2",
+            "name": "VLESS-H2-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "http2",
+            "tls": "tls",
+            "description": "VLESS + HTTP/2 多路复用 + TLS",
+            "args": ["host", "uuid", "path"]
+        },
+        {
+            "id": "h2",
+            "name": "VMess-H2-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "http2",
+            "tls": "tls",
+            "description": "VMess + HTTP/2 多路复用 + TLS",
+            "args": ["host", "uuid", "path"]
+        },
+        {
+            "id": "th2",
+            "name": "Trojan-H2-TLS",
+            "category": "cdn",
+            "recommended": false,
+            "transport": "http2",
+            "tls": "tls",
+            "description": "Trojan + HTTP/2 多路复用 + TLS",
+            "args": ["host", "password", "path"]
+        },
+        {
+            "id": "ws",
+            "name": "VMess-WS",
+            "category": "raw",
+            "recommended": false,
+            "transport": "ws",
+            "tls": "none",
+            "description": "纯 WebSocket 传输，便于前置 Nginx/Caddy 自建反向代理",
+            "args": ["port", "uuid"]
+        },
+        {
+            "id": "tcp",
+            "name": "VMess-TCP",
+            "category": "raw",
+            "recommended": false,
+            "transport": "tcp",
+            "tls": "none",
+            "description": "原生 TCP 传输，开销极低",
+            "args": ["port", "uuid"]
+        },
+        {
+            "id": "http",
+            "name": "VMess-HTTP",
+            "category": "raw",
+            "recommended": false,
+            "transport": "http",
+            "tls": "none",
+            "description": "伪装 HTTP/1.1 明文传输",
+            "args": ["port", "uuid"]
+        },
+        {
+            "id": "quic",
+            "name": "VMess-QUIC",
+            "category": "raw",
+            "recommended": false,
+            "transport": "quic",
+            "tls": "none",
+            "description": "基于原生 QUIC 协议传输",
+            "args": ["port", "uuid"]
         }
     ]
 }
