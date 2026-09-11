@@ -707,6 +707,10 @@ api_main() {
     status | ping)
         api_status
         ;;
+    restart | reload)
+        api_restart_service
+        api_status
+        ;;
     protocols | protos)
         api_protocols
         ;;
