@@ -82,6 +82,11 @@ api_node_to_json() {
         node_proto="VLESS-${net^^}"
     fi
 
+    if [[ "$conf_file" =~ -TLS- ]]; then
+        local tls_prefix=$(echo "$conf_file" | sed -E 's/-[0-9]+.*//;s/-[a-zA-Z0-9.-]+\.json$//')
+        [[ -n "$tls_prefix" ]] && node_proto="$tls_prefix"
+    fi
+
     jq -n \
         --arg name "$conf_file" \
         --arg tag "$conf_file" \
@@ -257,6 +262,7 @@ api_add_node() {
     is_dont_show_info=1
     is_dont_auto_exit=1
     is_no_del_msg=1
+    is_dont_test_host=1
 
     # Reset any inherited global state
     unset port uuid password host path ss_method is_servername is_socks_user is_socks_pass
@@ -282,7 +288,12 @@ api_add_node() {
         local h_arg="${add_args[2]}"
         local c_arg="${add_args[1]}"
         if [[ -z "$h_arg" || "$h_arg" == "auto" ]]; then
-            api_err "协议 $in_proto 需要在高级设置中填写已解析到本机的域名 (SNI/Host)"
+            get_ip
+            if [[ -n "$ip" ]]; then
+                h_arg="${ip//:/-}.nip.io"
+            else
+                h_arg="singbox.local"
+            fi
         fi
         add_args=("$h_arg" "$c_arg" "auto")
         ;;
@@ -304,11 +315,15 @@ api_add_node() {
     esac
 
     # Execute original add logic without modifying core generation template
-    add "$in_proto" "${add_args[@]}" &>/dev/null
+    local add_out
+    add_out=$(add "$in_proto" "${add_args[@]}" 2>&1)
     local ret=$?
     if [[ $ret -ne 0 ]]; then
         unset is_api_outbound
-        api_err "创建节点失败，返回状态码: $ret"
+        local err_msg
+        err_msg=$(echo "$add_out" | grep -E "错误|err|无法|失败" | head -n 1 | sed 's/.*: //;s/^[ \t]*//')
+        [[ -z "$err_msg" ]] && err_msg="创建节点失败，返回状态码: $ret"
+        api_err "$err_msg"
     fi
     unset is_api_outbound
 
