@@ -73,7 +73,9 @@ api_node_to_json() {
             outbound_str="socks5://${ob_server}:${ob_port}"
         fi
         if [[ -n "$ob_user" ]]; then
-            outbound_str="${ob_type}://${ob_user}:${ob_pass}@${ob_server}:${ob_port}"
+            local p_type="$ob_type"
+            [[ "$p_type" == "socks" ]] && p_type="socks5"
+            outbound_str="${p_type}://${ob_user}:${ob_pass}@${ob_server}:${ob_port}"
         fi
     fi
 

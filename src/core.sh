@@ -429,6 +429,11 @@ create() {
     esac
 }
 
+_urldecode() {
+    local str="${*//+/ }"
+    printf '%b' "${str//%/\\x}"
+}
+
 parse_outbound() {
     local raw=$1
     raw=$(echo "$raw" | xargs)
@@ -462,7 +467,7 @@ parse_outbound() {
     local pass=""
     if [[ $authority =~ @ ]]; then
         local creds="${authority%@*}"
-        authority="${authority#*@}"
+        authority="${authority##*@}"
         if [[ $creds =~ : ]]; then
             user="${creds%%:*}"
             pass="${creds#*:}"
@@ -470,6 +475,8 @@ parse_outbound() {
             user="$creds"
             pass=""
         fi
+        user=$(_urldecode "$user")
+        pass=$(_urldecode "$pass")
     fi
 
     local host=""
